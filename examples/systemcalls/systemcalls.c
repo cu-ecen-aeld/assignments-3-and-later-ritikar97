@@ -62,7 +62,7 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-
+    va_end(args);
 
 /*
  * TODO:
@@ -128,8 +128,6 @@ bool do_exec(int count, ...)
         }
     }
 
-    va_end(args);
-
     return true;
 }
 
@@ -153,7 +151,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     }
     command[count] = NULL;
 
-
+    va_end(args);
 
 /*
  * TODO
@@ -239,8 +237,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         }
     }
 
-
-    va_end(args);
 
     return true;
 }
