@@ -5,9 +5,11 @@
 CC := gcc
 SRC := aesdsocket.c
 TARGET := aesdsocket
-CFLAGS := -Wall -Werror
+CFLAGS := -Wall -Werror -g
 
-all: ${SRC}
+all: $(TARGET)
+
+$(TARGET) : ${SRC}
 	$(CROSS_COMPILE)$(CC) $(CFLAGS) ${SRC} -o ${TARGET}
 
 clean:
