@@ -358,7 +358,7 @@ int main(int argc, char* argv[])
     s_flags.is_log_open = true;
 
     // Create file to write into
-    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR, 744);
+    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR, 0744);
 
     syslog(LOG_INFO, "File opened\n");
     
