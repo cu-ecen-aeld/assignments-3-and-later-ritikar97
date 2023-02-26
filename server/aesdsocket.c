@@ -35,6 +35,7 @@
 
 #define RX_PACKET_LEN (100)
 
+// Struct to hold status flags
 typedef struct
 {
     bool is_file_open;
@@ -49,6 +50,7 @@ int socketfd, socketFile_fd, clientfd;
 
 status_flags s_flags = {.is_file_open = false, .is_log_open = false, .is_socket_open = false, .is_client_fd_open = false, .signal_caught = false};
 
+// Code referenced from Beej's Guide to Programming
 // get sockaddr, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa)
 {
@@ -60,7 +62,15 @@ void *get_in_addr(struct sockaddr *sa)
 }
 
 
-// Close log, socket, socketFile, delete the file
+/*
+ * @func        exit_program()
+ *
+ * @brief       Routine for graceful shutdown
+ *
+ * @parameters  none
+ *
+ * @returns     void
+ */
 static void exit_program()
 {
     if(shutdown(socketfd, SHUT_RDWR) == -1)
@@ -69,41 +79,56 @@ static void exit_program()
         exit(EXIT_FAILURE);
 	}
 
+    // Close log
     if(s_flags.is_log_open)
     {
         closelog();
         s_flags.is_log_open = false;
     }
-    
+
+    // Close file
     if(s_flags.is_file_open)
     {
         close(socketFile_fd);
         s_flags.is_file_open = false;
     }
 
+    // Close socket
     if(s_flags.is_socket_open)
     {
         close(socketfd);
         s_flags.is_socket_open = false;
     }
     
+    // Close client fd
     if(s_flags.is_client_fd_open)
     {
         close(clientfd);
         s_flags.is_client_fd_open = false;
     }  
 
+    // Signal caught
     if(s_flags.signal_caught)
     {
         remove(PATH_SOCKETDATA_FILE);
     }
-
 }
 
 
-// Referenced from Linux System Programming Chapter 10
+/*
+ * @func        signal_handler()
+ *
+ * @brief       Signal handler called upon signal invocation
+ *
+ * @parameters  none
+ *
+ * @returns     void
+ * 
+ * @ref         Linux System Programming Chapter 10
+ */
 static void signal_handler(int signo)
 {
+    // If expected signal is caught, exit gracefully
     if(signo == SIGINT || signo == SIGTERM)
     {
         syslog(LOG_INFO, "Caught signal, exiting: %s\n", strsignal(signo));
@@ -119,6 +144,17 @@ static void signal_handler(int signo)
 }
 
 
+/*
+ * @func        socket_server()
+ *
+ * @brief       Routine to accept connections and loopback received data
+ *
+ * @parameters  none
+ *
+ * @returns     int - status
+ * 
+ * @ref         Beej's Guide to Network Programming
+ */
 static int socket_server()
 {
     int status, num_bytes_recv, bytes_in_buf = 0;
@@ -190,19 +226,22 @@ static int socket_server()
                 }
             }
 
+            // Copy contents of received data packet into storage buffer
             memcpy((void*) (rx_buffer + bytes_in_buf), (void*) rx_packet, num_bytes_recv);
             bytes_in_buf += num_bytes_recv;
 
-
+            // While packets are complete (newline exists), write out to file
             while((newline_offset = memchr(rx_buffer, (int)'\n', bytes_in_buf)) != NULL)
             {            
-                                num_bytes_change = (char*)newline_offset - (char*)rx_buffer + 1;
+                // Number of bytes in the packet
+                num_bytes_change = (char*)newline_offset - (char*)rx_buffer + 1;
 
                 if(num_bytes_change < 0)
                 {
                     syslog(LOG_ERR, "ERROR: Incorrect calculation\n");
                 }
                 
+                // Bytes actually written to file
                 byte_delta_in_file = write(socketFile_fd, rx_buffer, num_bytes_change);
 
                 if(byte_delta_in_file == -1)
@@ -217,18 +256,22 @@ static int socket_server()
                 }
 
                 bytes_in_file += byte_delta_in_file;
-
                 bytes_in_buf -= ((char*)newline_offset - (char*)rx_buffer + 1);
 
+                // After writing out bytes to file, shift the bytes to fill the emptied space in the buffer
                 memcpy((void*)rx_buffer, (void*)newline_offset, (RX_PACKET_LEN * num_buf_segments) - ((char*)newline_offset - (char*)rx_buffer + 1));
                 memset(rx_buffer + bytes_in_buf, 0, (RX_PACKET_LEN * num_buf_segments) - bytes_in_buf);
 
+                // Buffer to read into and send to client from
                 char tx_buffer[RX_PACKET_LEN];
 
+                // Bytes to read from file
                 num_bytes_change = bytes_in_file;
 
+                // Start reading from the beginning of the file
                 lseek(socketFile_fd, 0, SEEK_SET);
 
+                // While there are bytes to read from the file, send to server
                 while(num_bytes_change != 0)
                 {
                     byte_delta_in_file = read(socketFile_fd, &tx_buffer[0], RX_PACKET_LEN);
@@ -244,7 +287,7 @@ static int socket_server()
 
                     total_bytes_sent = send(clientfd, &tx_buffer[0], num_bytes_to_send, 0);
                     num_bytes_change -= total_bytes_sent;
-                } // while there are bytes to read from the file
+                } 
 
                 newline_offset = NULL;
 
@@ -291,6 +334,7 @@ int main(int argc, char* argv[])
         exit(EXIT_FAILURE);
     }
 
+    // Adding support for running daemon
     if((argc == 2))
     {
         if(strcmp(argv[1], "-d") == 0)
@@ -350,6 +394,7 @@ int main(int argc, char* argv[])
     }
     s_flags.is_socket_open = true;
 
+    // To avoid errors from bind()
     status = setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &opt_val, sizeof(int));
 
     if(status == -1) 
