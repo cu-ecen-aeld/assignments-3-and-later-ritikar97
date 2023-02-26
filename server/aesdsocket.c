@@ -40,13 +40,14 @@ typedef struct
     bool is_file_open;
     bool is_log_open;
     bool is_socket_open;
+    bool is_client_fd_open;
     bool signal_caught;
 
 } status_flags;
 
-int socketfd, socketFile_fd;
+int socketfd, socketFile_fd, clientfd;
 
-status_flags s_flags = {.is_file_open = false, .is_log_open = false, .is_socket_open = false, .signal_caught = false};
+status_flags s_flags = {.is_file_open = false, .is_log_open = false, .is_socket_open = false, .is_client_fd_open = false, .signal_caught = false};
 
 // get sockaddr, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa)
@@ -62,20 +63,35 @@ void *get_in_addr(struct sockaddr *sa)
 // Close log, socket, socketFile, delete the file
 static void exit_program()
 {
+    if(shutdown(socketfd, SHUT_RDWR) == -1)
+	{
+		syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+	}
+
     if(s_flags.is_log_open)
     {
         closelog();
+        s_flags.is_log_open = false;
     }
     
     if(s_flags.is_file_open)
     {
         close(socketFile_fd);
+        s_flags.is_file_open = false;
     }
 
     if(s_flags.is_socket_open)
     {
         close(socketfd);
+        s_flags.is_socket_open = false;
     }
+    
+    if(s_flags.is_client_fd_open)
+    {
+        close(clientfd);
+        s_flags.is_client_fd_open = false;
+    }  
 
     if(s_flags.signal_caught)
     {
@@ -110,7 +126,6 @@ static int socket_server()
     int byte_delta_in_file; // bytes written to / read from file
     int num_bytes_change; // bytes to be written to/ to be read from file
     int bytes_in_file = 0;
-    int clientfd;
     struct sockaddr_storage client_addr;
     socklen_t addr_size;
     char ip_str[INET6_ADDRSTRLEN];
@@ -145,6 +160,7 @@ static int socket_server()
         {
             inet_ntop(client_addr.ss_family, get_in_addr((struct sockaddr*)&client_addr), ip_str, sizeof(ip_str));
             syslog(LOG_INFO, "Accepted connection from %s\n", ip_str);
+            s_flags.is_client_fd_open = true;
         }
 
 
@@ -162,8 +178,6 @@ static int socket_server()
         // Operate on data stream as long as packets are received 
         while((num_bytes_recv = recv(clientfd, rx_packet, RX_PACKET_LEN, 0)) > 0)
         {
-
-            printf("Just received %s\n", rx_packet);
             // If the rx_buffer does not have enough space, realloc it
             if((num_buf_segments*RX_PACKET_LEN) - bytes_in_buf < num_bytes_recv)
             {
@@ -193,7 +207,6 @@ static int socket_server()
 
                 if(byte_delta_in_file == -1)
                 {
-                    printf("Error in write()\n");
                     syslog(LOG_ERR, "ERROR: write() %s\n", strerror(errno));
                     return -1;
                 }
@@ -263,12 +276,13 @@ static int socket_server()
 }
 
 
-int main()
+int main(int argc, char* argv[])
 {
     int ret_val;
     struct addrinfo hints, *res;
     int status;
     int opt_val = 1;
+    bool daemon_mode = false;
 
     // Signal initialization
     if((signal(SIGINT, signal_handler) == SIG_ERR) || (signal(SIGTERM, signal_handler) == SIG_ERR)) 
@@ -277,6 +291,23 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    if((argc == 2))
+    {
+        if(strcmp(argv[1], "-d") == 0)
+        {
+            syslog(LOG_INFO, "Starting in Daemon mode\n");
+            daemon_mode = true;
+        }
+        else
+        {
+            syslog(LOG_ERR, "Invalid argument passed. \"-d\" expcted\n");
+            return -1;
+        }
+    }
+    else if(argc > 2)
+    {
+        syslog(LOG_ERR, "ERROR: Invalid number of arguments passed. Expected = 2, passed = %d\n", argc);
+    }
 
     // Open system log for logging capability
     openlog(NULL, LOG_CONS | LOG_PID | LOG_PERROR, LOG_USER);
@@ -314,12 +345,14 @@ int main()
     if(socketfd == -1)
     {
         syslog(LOG_ERR, "ERROR: socket() %s\n", strerror(errno));
+        exit_program();
         return -1;
     }
-
     s_flags.is_socket_open = true;
 
-    if (setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEADDR, &opt_val, sizeof(int)) == -1) 
+    status = setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &opt_val, sizeof(int));
+
+    if(status == -1) 
     {
         syslog(LOG_ERR, "ERROR: setsockopt()) %s\n", gai_strerror(status));
         exit_program();
@@ -332,11 +365,22 @@ int main()
     if(status == -1)
     {
         syslog(LOG_ERR, "ERROR: bind() %s\n", strerror(errno));
+        exit_program();
         return -1;
     }
 
     // Result is not used anymore
     freeaddrinfo(res);
+
+    if(daemon_mode)
+    {
+        if((status = daemon(0, 0)) == -1)
+        {
+            syslog(LOG_ERR, "ERROR: fork() %s\n", strerror(errno));
+            exit_program();
+            return -1;
+        }
+    }
 
     ret_val = socket_server();
     
