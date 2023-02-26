@@ -1,7 +1,6 @@
 # References : ../examples/autotest-validate/Makefile
 
-
-
+CROSS_COMPILE = 
 CC := gcc
 SRC := aesdsocket.c
 TARGET := aesdsocket
