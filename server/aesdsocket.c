@@ -73,12 +73,6 @@ void *get_in_addr(struct sockaddr *sa)
  */
 static void exit_program()
 {
-    if(shutdown(socketfd, SHUT_RDWR) == -1)
-	{
-		syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-	}
-
     // Close log
     if(s_flags.is_log_open)
     {
@@ -128,13 +122,18 @@ static void exit_program()
  */
 static void signal_handler(int signo)
 {
+
     // If expected signal is caught, exit gracefully
     if(signo == SIGINT || signo == SIGTERM)
     {
         syslog(LOG_INFO, "Caught signal, exiting: %s\n", strsignal(signo));
         s_flags.signal_caught = true;
-        exit_program();
-        exit(EXIT_SUCCESS);
+
+        if(shutdown(socketfd, SHUT_RDWR) == -1)
+	    {
+		    syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
+	    }
+        
     }
     else
     {
@@ -187,6 +186,13 @@ static int socket_server()
     {
         // Accept connections
         clientfd = accept(socketfd, (struct sockaddr*)&client_addr, &addr_size);
+
+        // If signal was received, accept will return an error
+        if(s_flags.signal_caught)
+        {
+            break;
+        }
+
         if(clientfd == -1)
         {
             syslog(LOG_ERR, "ERROR: accept() %s\n", strerror(errno));
@@ -212,7 +218,7 @@ static int socket_server()
         memset(rx_packet, 0, RX_PACKET_LEN);
 
         // Operate on data stream as long as packets are received 
-        while((num_bytes_recv = recv(clientfd, rx_packet, RX_PACKET_LEN, 0)) > 0)
+        while(((num_bytes_recv = recv(clientfd, rx_packet, RX_PACKET_LEN, 0)) > 0) && (!s_flags.signal_caught))
         {
             // If the rx_buffer does not have enough space, realloc it
             if((num_buf_segments*RX_PACKET_LEN) - bytes_in_buf < num_bytes_recv)
