@@ -1,15 +1,25 @@
 # References : ../examples/autotest-validate/Makefile
-
 CROSS_COMPILE = 
-CC := gcc
-SRC := aesdsocket.c
-TARGET := aesdsocket
-CFLAGS := -Wall -Werror -g
+
+ifeq ($(CC),)
+	CC ?= $(CROSS_COMPILE)gcc
+endif
+
+ifeq ($(CFLAGS),)
+	CFLAGS ?= -g -Wall -Werror
+endif
+
+ifeq ($(LDFLAGS),)
+	LDFLAGS ?= -lrt -pthread 
+endif
+
+SRC ?= aesdsocket.c
+TARGET ?= aesdsocket
 
 all: $(TARGET)
 
 $(TARGET) : ${SRC}
-	$(CROSS_COMPILE)$(CC) $(CFLAGS) ${SRC} -o ${TARGET}
+	$(CC) $(CFLAGS) ${SRC} -o ${TARGET} $(LDFLAGS)
 
 clean:
 	rm -f *.o ${TARGET}
