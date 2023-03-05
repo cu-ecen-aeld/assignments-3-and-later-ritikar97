@@ -7,7 +7,7 @@
  * @date        Feb 21, 2023
  * 
  * @References  Beej's Guide to Network Programming
- *              Coursera Week 4 videos for AESD 
+ *              Coursera videos for AESD (Weeks 4 and 5)
  */
 
 #include <stdio.h>
@@ -31,7 +31,6 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 
-
 #define PORT ("9000")
 
 #define BACKLOG (10)
@@ -46,6 +45,7 @@
     for ((var) = SLIST_FIRST((head));                                        \
             (var) && ((tvar) = SLIST_NEXT((var), field), 1);                 \
             (var) = (tvar))
+
 
 // Struct to hold status flags
 typedef struct
@@ -67,18 +67,14 @@ typedef struct
     char ip_str[INET6_ADDRSTRLEN];
 } thread_param_t;
 
-//to-do: remove
-/*struct timer_s
-{
-    int file_handle;
-};*/
-
 
 int socketfd, socketFile_fd, clientfd;
+timer_t timer_id;
 int bytes_in_file = 0;
-SLIST_HEAD(slisthead, slist_data_s) head;
+SLIST_HEAD(slisthead, slist_data_s) head; // Head of the linked list
 pthread_mutex_t socketFileMutex = PTHREAD_MUTEX_INITIALIZER; // Mutex to control access to socket file
 
+// Flags to control program flow
 status_flags s_flags = {.is_file_open = false, .is_log_open = false, .is_socket_open = false, .signal_caught = false, .err_detected = false};
 
 // SLIST struct declaration
@@ -89,9 +85,8 @@ typedef struct slist_data_s
 } slist_data_t;
 
 
-/*
-* set @param result with @param ts_1 + @param ts_2
-*/
+// Reference from AESD repo for Lecture 9 
+// *Result = *ts_1 + *ts_2
 static inline void timespec_add( struct timespec *result,
                         const struct timespec *ts_1, const struct timespec *ts_2)
 {
@@ -103,8 +98,18 @@ static inline void timespec_add( struct timespec *result,
     }
 }
 
-// Code referenced from Beej's Guide to Programming
-// get sockaddr, IPv4 or IPv6:
+
+/*
+ * @func        get_in_addr()
+ *
+ * @brief       Gets socket address from IPv4/IPv6
+ *
+ * @parameters  Pointer to struct sockaddr
+ *
+ * @returns     void pointer containing the address
+ * 
+ * @ref         Code referenced from Beej's Guide to Network Programming
+ */
 void *get_in_addr(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET) {
@@ -115,6 +120,17 @@ void *get_in_addr(struct sockaddr *sa)
 }
 
 
+/*
+ * @func        alarm_handler()
+ *
+ * @brief       Function motified when timer expires
+ *
+ * @parameters  signal value
+ *
+ * @returns     void
+ * 
+ * @ref         Code referenced from repo linked in AESD Lecture 9 
+ */
 static void alarm_handler(union sigval sigval)
 {
     syslog(LOG_INFO, "Caught SIGALARM\n");
@@ -124,12 +140,14 @@ static void alarm_handler(union sigval sigval)
     struct tm broken_time; 
     int ret_bytes, status, bytes_written;
 
+    // Get fd for exclusive access to file
     int file_handle = (int)sigval.sival_int;
 
+    // Get time since epoch and convert into type struct *tm
     time(&time_since_epoch);
+    localtime_r(&time_since_epoch, &broken_time); // signal-safe
 
-    localtime_r(&time_since_epoch, &broken_time);
-
+    // Extract time in the required format
     ret_bytes = strftime(timestamp, TIMESTAMP_LEN, "timestamp:%Y %b %d, %a, %H:%M:%S%n", &broken_time);
 
     if(ret_bytes == 0)
@@ -147,7 +165,7 @@ static void alarm_handler(union sigval sigval)
         return;
     }
     
-    // Bytes actually written to file
+    // Write out timestamp to the file
     bytes_written = write(file_handle, timestamp, ret_bytes);
 
     bytes_in_file += bytes_written;
@@ -213,7 +231,7 @@ static void exit_program()
         remove(PATH_SOCKETDATA_FILE);
     }
 
-
+    // Join each thread in the linked-list that hasn't been joined already
     SLIST_FOREACH_SAFE(t_node, &head, entries, t_node_temp)
     {
         if(t_node -> thread_param.thread_complete)
@@ -223,6 +241,9 @@ static void exit_program()
                 syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
                 exit(EXIT_FAILURE);
             }
+
+            // Close client fd
+            close(t_node -> thread_param.client_fd);
 
             // Remove the thread from the linked_list once it has been joined
             SLIST_REMOVE(&head, t_node, slist_data_s, entries);
@@ -239,6 +260,14 @@ static void exit_program()
 		syslog(LOG_ERR, "ERROR: pthread_mutex_destroy() %s\n", strerror(errno));	
 		exit(EXIT_FAILURE);
 	}
+
+    // Destroy timer
+    status = timer_delete(timer_id);
+    if(status != 0)
+    {
+        syslog(LOG_ERR, "ERROR: timer_delete() %s\n", strerror(errno));	
+		exit(EXIT_FAILURE);
+    }
 }
 
 
@@ -248,8 +277,6 @@ static void add_timer()
     struct sigevent sev;
     struct itimerspec ts;
     struct timespec start_time;
-
-    timer_t timer_id;
 
     memset(&sev, 0, sizeof(struct sigevent));
     memset(&ts, 0, sizeof(struct itimerspec));
@@ -265,11 +292,10 @@ static void add_timer()
         syslog(LOG_ERR, "Please open socket file before adding timer\n");
     }
 
-    
+    sev.sigev_notify_function = &alarm_handler; // Function to be notified when timer expires
 
-    sev.sigev_notify_function = &alarm_handler;
-
-    status = timer_create(1, &sev, &timer_id);
+    // Create a timer
+    status = timer_create(CLOCK_MONOTONIC, &sev, &timer_id);
 
     if(status != 0)
     {
@@ -278,6 +304,7 @@ static void add_timer()
         return;
     }
 
+    // Get current time
     status = clock_gettime(CLOCK_MONOTONIC, &start_time);
 
     if(status != 0)
@@ -287,12 +314,15 @@ static void add_timer()
         return;
     }
     
+    // Re-arm the timer with an interval os 10 seconds
     ts.it_interval.tv_sec = 10;
     ts.it_interval.tv_nsec = 0;
 
+    // Add interval to current value
     timespec_add(&ts.it_value, &start_time, &ts.it_interval);
 
-    status = timer_settime(timer_id, 1, &ts, NULL);
+    // Arm the timer
+    status = timer_settime(timer_id, TIMER_ABSTIME, &ts, NULL);
 
     if(status != 0)
     {
@@ -303,6 +333,16 @@ static void add_timer()
 }
 
 
+/*
+ * @func        exit_from_thread()
+ *
+ * @brief       Graceful exit from the thread
+ *
+ * @parameters  thread parameters and pointer to rx_buffer and rx_packet
+ *
+ * @returns     void
+ * 
+ */
 static void exit_from_thread(thread_param_t* thread_param, bool free_rx_packet, char* rx_packet, bool free_rx_buf, char* rx_buf)
 {
     if(free_rx_packet)
@@ -357,6 +397,16 @@ static void signal_handler(int signo)
 }
 
 
+/*
+ * @func        server_thread()
+ *
+ * @brief       Recieves data from each connection and sends it back
+ *
+ * @parameters  Paramaters specific to each thread
+ *
+ * @returns     void pointer
+ * 
+ */
 void *server_thread(void* thread_arg)
 {
     char* rx_buffer = NULL;
@@ -491,7 +541,6 @@ void *server_thread(void* thread_arg)
             // While there are bytes to read from the file, send to server
             while(num_bytes_change != 0)
             {
-
                 byte_delta_in_file = read(socketFile_fd, &tx_buffer[0], RX_PACKET_LEN);
 
                 if(byte_delta_in_file == -1)
@@ -508,7 +557,6 @@ void *server_thread(void* thread_arg)
                         exit_from_thread(param, true, rx_packet, true, rx_buffer);
                         return NULL;
                     }
-
                     return NULL;
                 }
 
@@ -555,7 +603,7 @@ void *server_thread(void* thread_arg)
 /*
  * @func        socket_server()
  *
- * @brief       Routine to accept connections and loopback received data
+ * @brief       Routine to accept connections and spawn threads
  *
  * @parameters  none
  *
@@ -602,7 +650,7 @@ static int socket_server()
         if(clientfd == -1)
         {
             syslog(LOG_ERR, "ERROR: accept() %s\n", strerror(errno));
-            // to-do: check what else to close;
+            s_flags.err_detected = true;
             return -1;
         }
         else // Print IP address of client
@@ -611,6 +659,7 @@ static int socket_server()
             syslog(LOG_INFO, "Accepted connection from %s\n", ip_str);
         }
 
+        // Initialize thread parameters
         t_node = malloc(sizeof(slist_data_t));
         t_node -> thread_param.thread_complete = false;
         t_node -> thread_param.client_fd = clientfd;
@@ -623,15 +672,14 @@ static int socket_server()
             syslog(LOG_ERR, "ERROR: pthread_create() %s\n", strerror(errno));
 
             s_flags.err_detected = true;
-            //close(clientfd)
-            // to-do: Close all client_fds here?
-            //return -1;
         }
 
+        // Insert the thread node into the linked list
         SLIST_INSERT_HEAD(&head, t_node, entries);
 
         slist_data_t *t_node_temp = NULL;
 
+        // If the thread is complete, join it
         SLIST_FOREACH_SAFE(t_node, &head, entries, t_node_temp)
         {
             if(t_node -> thread_param.thread_complete)
@@ -640,19 +688,18 @@ static int socket_server()
                 {
                     syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
 
-                    continue;
-                    // to-do: check what else to close
-                    //return -1;
+                    s_flags.err_detected = true;
                 }
+
+                // Close client fd
+                close(t_node -> thread_param.client_fd);
 
                 // Remove the thread from the linked_list once it has been joined
                 SLIST_REMOVE(&head, t_node, slist_data_s, entries);
 
-                free(t_node);
+                free(t_node); // Free the thread node
             }
         }
-        
-
     }
 
     close(socketfd);
@@ -773,11 +820,12 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Initialize timer
     add_timer();
 
     ret_val = socket_server();
     
-    exit_program();
+    exit_program(); // Clean exit
 
     return ret_val;
 }
