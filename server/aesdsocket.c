@@ -117,7 +117,6 @@ void *get_in_addr(struct sockaddr *sa)
 
 static void alarm_handler(union sigval sigval)
 {
-    printf("Hey in here\n");
     syslog(LOG_INFO, "Caught SIGALARM\n");
 
     char timestamp[TIMESTAMP_LEN];
@@ -144,7 +143,8 @@ static void alarm_handler(union sigval sigval)
     if(status != 0)
     {
         syslog(LOG_ERR, "ERROR: pthread_mutex_lock() %s\n", strerror(errno));
-        // to-do : what do close
+        s_flags.err_detected = true;
+        return;
     }
     
     // Bytes actually written to file
@@ -158,13 +158,15 @@ static void alarm_handler(union sigval sigval)
     if(status != 0)
     {
         syslog(LOG_ERR, "ERROR: pthread_mutex_unlock() %s\n", strerror(errno));
-        //to-do what to close
+        s_flags.err_detected = true;
+        return;
     }
 
     if(bytes_written == -1)
     {
         syslog(LOG_ERR, "ERROR: write() %s\n", strerror(errno));
-        // t-do : what to close
+        s_flags.err_detected = true;
+        return;
     }
 
 }
@@ -249,6 +251,9 @@ static void add_timer()
 
     timer_t timer_id;
 
+    memset(&sev, 0, sizeof(struct sigevent));
+    memset(&ts, 0, sizeof(struct itimerspec));
+
     sev.sigev_notify = SIGEV_THREAD;
 
     if(s_flags.is_file_open)
@@ -259,6 +264,8 @@ static void add_timer()
     {
         syslog(LOG_ERR, "Please open socket file before adding timer\n");
     }
+
+    
 
     sev.sigev_notify_function = &alarm_handler;
 
@@ -279,9 +286,9 @@ static void add_timer()
         s_flags.err_detected = true;
         return;
     }
-
-    ts.it_value.tv_sec = 10;
-    ts.it_value.tv_nsec = 1000000;
+    
+    ts.it_interval.tv_sec = 10;
+    ts.it_interval.tv_nsec = 0;
 
     timespec_add(&ts.it_value, &start_time, &ts.it_interval);
 
@@ -293,8 +300,6 @@ static void add_timer()
         s_flags.err_detected = true;
         return;
     }
-
-    printf("YO!!!!!\n");
 }
 
 
@@ -757,8 +762,7 @@ int main(int argc, char* argv[])
     // Result is not used anymore
     freeaddrinfo(res);
 
-    add_timer();
-
+    
     if(daemon_mode)
     {
         if((status = daemon(0, 0)) == -1)
@@ -768,6 +772,8 @@ int main(int argc, char* argv[])
             return -1;
         }
     }
+
+    add_timer();
 
     ret_val = socket_server();
     

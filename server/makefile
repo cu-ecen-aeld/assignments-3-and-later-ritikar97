@@ -10,7 +10,7 @@ ifeq ($(CFLAGS),)
 endif
 
 ifeq ($(LDFLAGS),)
-	LDFLAGS ?= -lrt -pthread 
+	LDFLAGS ?= -pthread -lrt
 endif
 
 SRC ?= aesdsocket.c
