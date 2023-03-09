@@ -204,6 +204,14 @@ static void exit_program()
     slist_data_t *t_node, *t_node_temp;
     int status;
 
+    // Delete timer
+    status = timer_delete(timer_id);
+    if(status != 0)
+    {
+        syslog(LOG_ERR, "ERROR: timer_delete() %s\n", strerror(errno));	
+		exit(EXIT_FAILURE);
+    }
+
     // Close log
     if(s_flags.is_log_open)
     {
@@ -231,10 +239,10 @@ static void exit_program()
         remove(PATH_SOCKETDATA_FILE);
     }
 
-    // Join each thread in the linked-list that hasn't been joined already
-    SLIST_FOREACH_SAFE(t_node, &head, entries, t_node_temp)
+    while(!SLIST_EMPTY(&head))
     {
-        if(t_node -> thread_param.thread_complete)
+        // Join each thread in the linked-list that hasn't been joined already
+        SLIST_FOREACH_SAFE(t_node, &head, entries, t_node_temp)
         {
             if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
             {
@@ -250,6 +258,7 @@ static void exit_program()
 
             free(t_node);
         }
+        
     }
 
     // Destroy the mutex that holds access to the socket file
@@ -261,13 +270,6 @@ static void exit_program()
 		exit(EXIT_FAILURE);
 	}
 
-    // Destroy timer
-    status = timer_delete(timer_id);
-    if(status != 0)
-    {
-        syslog(LOG_ERR, "ERROR: timer_delete() %s\n", strerror(errno));	
-		exit(EXIT_FAILURE);
-    }
 }
 
 
@@ -383,10 +385,14 @@ static void signal_handler(int signo)
         syslog(LOG_INFO, "Caught signal, exiting: %s\n", strsignal(signo));
         s_flags.signal_caught = true;
 
-        if(shutdown(socketfd, SHUT_RDWR) == -1)
-	    {
-		    syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
-	    }
+        if(s_flags.is_socket_open)
+        {
+            printf("File descriptor here = %d\n", socketfd);
+            if(shutdown(socketfd, SHUT_RDWR) == -1)
+	        {
+		        syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
+	        }
+        }
         
     }
     else
@@ -525,6 +531,8 @@ void *server_thread(void* thread_arg)
             // Bytes to read from file
             num_bytes_change = bytes_in_file;
 
+            printf("Number of bytes to be read from the file = %d\n", num_bytes_change);
+
             // Lock access to the file
             status = pthread_mutex_lock(&socketFileMutex);
 
@@ -590,8 +598,6 @@ void *server_thread(void* thread_arg)
     if(num_bytes_recv == -1)
     {
         syslog(LOG_ERR, "ERROR: recv() %s\n", strerror(errno));
-        exit_from_thread(param, true, rx_packet, true, rx_buffer);
-        return NULL;
     }
 
     exit_from_thread(param, true, rx_packet, true, rx_buffer);
