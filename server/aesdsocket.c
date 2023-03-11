@@ -244,6 +244,7 @@ static void exit_program()
         // Join each thread in the linked-list that hasn't been joined already
         SLIST_FOREACH_SAFE(t_node, &head, entries, t_node_temp)
         {
+            
             if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
             {
                 syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
@@ -387,7 +388,6 @@ static void signal_handler(int signo)
 
         if(s_flags.is_socket_open)
         {
-            printf("File descriptor here = %d\n", socketfd);
             if(shutdown(socketfd, SHUT_RDWR) == -1)
 	        {
 		        syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
@@ -530,8 +530,6 @@ void *server_thread(void* thread_arg)
 
             // Bytes to read from file
             num_bytes_change = bytes_in_file;
-
-            printf("Number of bytes to be read from the file = %d\n", num_bytes_change);
 
             // Lock access to the file
             status = pthread_mutex_lock(&socketFileMutex);
