@@ -244,10 +244,10 @@ static void exit_program()
         // Join each thread in the linked-list that hasn't been joined already
         t_node = SLIST_FIRST(&head);
 
-
+        // Shutdown the client socket
         if(shutdown(t_node -> thread_param.client_fd, SHUT_RDWR) == -1)
 	    {
-		    syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
+		    syslog(LOG_ERR, "ERROR: shutdown() of client fd %s\n", strerror(errno));
             exit(EXIT_FAILURE);
 	    }
 
@@ -363,10 +363,6 @@ static void exit_from_thread(thread_param_t* thread_param, bool free_rx_packet, 
     {
         free(rx_buf);
     }
-
-    close(thread_param -> client_fd);
-
-    syslog(LOG_INFO, "Closed connection from %s\n", thread_param -> ip_str);
 
     thread_param -> thread_complete = true;
 }
@@ -694,6 +690,9 @@ static int socket_server()
         {
             if(t_node -> thread_param.thread_complete)
             {
+                close(t_node -> thread_param.client_fd);
+                syslog(LOG_INFO, "Closed connection from %s\n", t_node -> thread_param.ip_str);
+                
                 if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
                 {
                     syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
