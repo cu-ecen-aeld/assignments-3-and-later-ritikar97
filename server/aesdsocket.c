@@ -201,7 +201,7 @@ static void alarm_handler(union sigval sigval)
  */
 static void exit_program()
 {
-    slist_data_t *t_node, *t_node_temp;
+    slist_data_t *t_node = NULL;
     int status;
 
     // Delete timer
@@ -242,23 +242,29 @@ static void exit_program()
     while(!SLIST_EMPTY(&head))
     {
         // Join each thread in the linked-list that hasn't been joined already
-        SLIST_FOREACH_SAFE(t_node, &head, entries, t_node_temp)
-        {
+        t_node = SLIST_FIRST(&head);
+
+
+        if(shutdown(t_node -> thread_param.client_fd, SHUT_RDWR) == -1)
+	    {
+		    syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
+            exit(EXIT_FAILURE);
+	    }
+
             
-            if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
-            {
-                syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
-                exit(EXIT_FAILURE);
-            }
-
-            // Close client fd
-            close(t_node -> thread_param.client_fd);
-
-            // Remove the thread from the linked_list once it has been joined
-            SLIST_REMOVE(&head, t_node, slist_data_s, entries);
-
-            free(t_node);
+        if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
+        {
+            syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
+            exit(EXIT_FAILURE);
         }
+
+        // Close client fd
+        close(t_node -> thread_param.client_fd);
+
+        // Remove the thread from the linked_list once it has been joined
+        SLIST_REMOVE(&head, t_node, slist_data_s, entries);
+
+        free(t_node);
         
     }
 
