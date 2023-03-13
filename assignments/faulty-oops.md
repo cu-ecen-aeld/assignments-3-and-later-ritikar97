@@ -1,7 +1,7 @@
 # AESD Assignment 7  
 ## Output and Analysis of a Kernel Oops error caused by module 'faulty'  
 
-The command that was run was 'echo “hello_world” > /dev/faulty'  
+The command that was run was `echo “hello_world” > /dev/faulty`  
 
 ### Output  
   
