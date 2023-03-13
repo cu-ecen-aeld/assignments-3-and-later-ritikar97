@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # file: finder.sh
 # This script checks for a given string within a given filesystem

@@ -1,4 +1,14 @@
 #include "systemcalls.h"
+#include <sys/types.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h> 
+#include <sys/wait.h>
+
 
 /**
  * @param cmd the command to execute with system()
@@ -16,6 +26,11 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    int ret = system(cmd);
+
+    // Error occured or non-zero value was returned by the command
+    if(ret == -1 || ret != 0) 
+        return false;
 
     return true;
 }
@@ -40,14 +55,14 @@ bool do_exec(int count, ...)
     va_start(args, count);
     char * command[count+1];
     int i;
+    pid_t pid, wait_pid;
+    int status;
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
+    va_end(args);
 
 /*
  * TODO:
@@ -59,7 +74,59 @@ bool do_exec(int count, ...)
  *
 */
 
-    va_end(args);
+    // Forking the child and testing error condition
+    pid = fork();
+
+    if(pid == -1)
+    {
+        printf("Error occured while forking a process with errno %d\n", errno);
+        return false;
+    }
+    
+    // If child process, exec command
+    if(pid == 0)
+    {
+        int ret;
+        ret = execv(command[0], command);
+
+        // Error testing
+        if(ret == -1)
+        {
+            perror("Eror executing the program with execv()");
+            exit(1);
+        }
+    }
+    
+    // If parent process, wait for child to terminate
+    if(pid > 0)
+    {
+        wait_pid = wait(&status);
+
+        // Error testing
+        if (wait_pid == -1)
+        {
+            perror ("Error with wait()");
+            return false;
+
+        }
+        else
+        {
+            // Check if child exited normally
+            if(WIFEXITED(status))
+            {
+                // Check if child process exited with return value 0
+                if(WEXITSTATUS(status) != 0)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+
+        }
+    }
 
     return true;
 }
@@ -72,6 +139,9 @@ bool do_exec(int count, ...)
 bool do_exec_redirect(const char *outputfile, int count, ...)
 {
     va_list args;
+    int fd;
+    pid_t pid, wait_pid;
+    int status;
     va_start(args, count);
     char * command[count+1];
     int i;
@@ -80,10 +150,8 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
+    va_end(args);
 
 /*
  * TODO
@@ -92,8 +160,83 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    // Opening the output file
+    fd = open(outputfile, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
 
-    va_end(args);
+    // Error checking for opening file
+    if (fd < 0) 
+    { 
+        perror("Error opening file"); 
+        return false; 
+    }
+
+    // Forking the child and testing error condition
+    pid = fork();
+
+    if(pid == -1)
+    {
+        printf("Error occured while forking a process with errno %d\n", errno);
+        return false;
+    }
+    
+    // If child process, exec command
+    if(pid == 0)
+    {
+        int ret;
+
+        // Duplicating file descriptor and checking for error
+        if (dup2(fd, 1) < 0) 
+        { 
+            perror("Error with dup2"); 
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+
+
+        // Execute command and test error condition
+        ret = execv(command[0], command);
+
+        if(ret == -1)
+        {
+            perror("Eror executing the program with execv()");
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    // If parent process, wait for child to terminate
+    if(pid > 0)
+    {
+        //Close file descriptor
+        close(fd);
+
+        wait_pid = wait(&status);
+
+        // Error testing
+        if (wait_pid == -1)
+        {
+            perror ("Error with wait()");
+            return false;
+
+        }
+        else
+        {
+            // Check if child exited normally
+            if(WIFEXITED(status))
+            {
+                // Check if child exited with a return value 0
+                if(WEXITSTATUS(status) != 0)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+
+        }
+    }
+
 
     return true;
 }
