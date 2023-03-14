@@ -201,8 +201,16 @@ static void alarm_handler(union sigval sigval)
  */
 static void exit_program()
 {
-    slist_data_t *t_node, *t_node_temp;
+    slist_data_t *t_node = NULL;
     int status;
+
+    // Delete timer
+    status = timer_delete(timer_id);
+    if(status != 0)
+    {
+        syslog(LOG_ERR, "ERROR: timer_delete() %s\n", strerror(errno));	
+		exit(EXIT_FAILURE);
+    }
 
     // Close log
     if(s_flags.is_log_open)
@@ -231,25 +239,33 @@ static void exit_program()
         remove(PATH_SOCKETDATA_FILE);
     }
 
-    // Join each thread in the linked-list that hasn't been joined already
-    SLIST_FOREACH_SAFE(t_node, &head, entries, t_node_temp)
+    while(!SLIST_EMPTY(&head))
     {
-        if(t_node -> thread_param.thread_complete)
+        // Join each thread in the linked-list that hasn't been joined already
+        t_node = SLIST_FIRST(&head);
+
+        // Shutdown the client socket
+        if(shutdown(t_node -> thread_param.client_fd, SHUT_RDWR) == -1)
+	    {
+		    syslog(LOG_ERR, "ERROR: shutdown() of client fd %s\n", strerror(errno));
+            exit(EXIT_FAILURE);
+	    }
+
+            
+        if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
         {
-            if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
-            {
-                syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
-                exit(EXIT_FAILURE);
-            }
-
-            // Close client fd
-            close(t_node -> thread_param.client_fd);
-
-            // Remove the thread from the linked_list once it has been joined
-            SLIST_REMOVE(&head, t_node, slist_data_s, entries);
-
-            free(t_node);
+            syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
+            exit(EXIT_FAILURE);
         }
+
+        // Close client fd
+        close(t_node -> thread_param.client_fd);
+
+        // Remove the thread from the linked_list once it has been joined
+        SLIST_REMOVE(&head, t_node, slist_data_s, entries);
+
+        free(t_node);
+        
     }
 
     // Destroy the mutex that holds access to the socket file
@@ -261,13 +277,6 @@ static void exit_program()
 		exit(EXIT_FAILURE);
 	}
 
-    // Destroy timer
-    status = timer_delete(timer_id);
-    if(status != 0)
-    {
-        syslog(LOG_ERR, "ERROR: timer_delete() %s\n", strerror(errno));	
-		exit(EXIT_FAILURE);
-    }
 }
 
 
@@ -355,10 +364,6 @@ static void exit_from_thread(thread_param_t* thread_param, bool free_rx_packet, 
         free(rx_buf);
     }
 
-    close(thread_param -> client_fd);
-
-    syslog(LOG_INFO, "Closed connection from %s\n", thread_param -> ip_str);
-
     thread_param -> thread_complete = true;
 }
 
@@ -383,10 +388,13 @@ static void signal_handler(int signo)
         syslog(LOG_INFO, "Caught signal, exiting: %s\n", strsignal(signo));
         s_flags.signal_caught = true;
 
-        if(shutdown(socketfd, SHUT_RDWR) == -1)
-	    {
-		    syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
-	    }
+        if(s_flags.is_socket_open)
+        {
+            if(shutdown(socketfd, SHUT_RDWR) == -1)
+	        {
+		        syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
+	        }
+        }
         
     }
     else
@@ -590,8 +598,6 @@ void *server_thread(void* thread_arg)
     if(num_bytes_recv == -1)
     {
         syslog(LOG_ERR, "ERROR: recv() %s\n", strerror(errno));
-        exit_from_thread(param, true, rx_packet, true, rx_buffer);
-        return NULL;
     }
 
     exit_from_thread(param, true, rx_packet, true, rx_buffer);
@@ -684,6 +690,9 @@ static int socket_server()
         {
             if(t_node -> thread_param.thread_complete)
             {
+                close(t_node -> thread_param.client_fd);
+                syslog(LOG_INFO, "Closed connection from %s\n", t_node -> thread_param.ip_str);
+                
                 if((status = pthread_join(t_node -> thread_param.tid, NULL)) != 0)
                 {
                     syslog(LOG_ERR, "ERROR: pthread_join() %s\n", strerror(errno));
