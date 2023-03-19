@@ -80,6 +80,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         return -ERESTARTSYS;
     }
 
+    // Get entry at the specified offset from the circular buffer
     read_entry = aesd_circular_buffer_find_entry_offset_for_fpos(&(dev -> aesd_cb), *f_pos, &entry_byte_offset);
 
     if(read_entry == NULL)
@@ -87,6 +88,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         goto exit_gracefully;
     }
 
+    // Check if required count is within the bounds of the entry or not
     if((read_entry -> size - entry_byte_offset) < count)
     {
         
@@ -98,6 +100,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         num_bytes_read = count;
     }
 
+    // Copy the entry from the specified offset to the user-provided buffer
     if(copy_to_user(buf, read_entry -> buffptr + entry_byte_offset, num_bytes_read))
     {
         retval = -EFAULT;
@@ -171,7 +174,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
         memcpy(dev -> buf_element.buffptr, temp_buf, count);
     }
-    else
+    else // Reallocate the buffer that already exists to accomodate the new data
     {
         dev -> buf_element.buffptr = krealloc(dev -> buf_element.buffptr, (dev -> buf_element.size + count), GFP_KERNEL);
         if(dev -> buf_element.buffptr == NULL)
@@ -185,7 +188,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     dev -> buf_element.size += count;
 
-    // If last char is \n, add entry to circular buffer
+    // If last char is \n, add entry to circular buffer (aesdsocket sends '\n' as the last character)
     if((dev -> buf_element.buffptr[(dev -> buf_element.size) - 1]) == '\n')
     {
         entry_to_rm = aesd_circular_buffer_add_entry(&(dev -> aesd_cb), &(dev -> buf_element));
