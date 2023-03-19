@@ -77,7 +77,7 @@ const char* aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
     // Error checking for pointers
     if(buffer == NULL || add_entry == NULL)
     {
-        return;
+        return NULL;
     }
 
     // If buff is full, return pointer to be freed
