@@ -35,7 +35,13 @@
 
 #define BACKLOG (10)
 
+#define USE_AESD_CHAR_DEVICE (1)
+
+#if (USE_AESD_CHAR_DEVICE == 1)
+#define PATH_SOCKETDATA_FILE ("/dev/aesdchar")
+#else
 #define PATH_SOCKETDATA_FILE ("/var/tmp/aesdsocketdata")
+#endif
 
 #define RX_PACKET_LEN (100)
 
@@ -133,6 +139,8 @@ void *get_in_addr(struct sockaddr *sa)
  */
 static void alarm_handler(union sigval sigval)
 {
+    
+#if (USE_AESD_CHAR_DEVICE == 0)
     syslog(LOG_INFO, "Caught SIGALARM\n");
 
     char timestamp[TIMESTAMP_LEN];
@@ -154,6 +162,7 @@ static void alarm_handler(union sigval sigval)
     {
         syslog(LOG_ERR, "ERROR(): strftime(). Contens undefined");
     }
+
 
     // Lock access to the file
     status = pthread_mutex_lock(&socketFileMutex);
@@ -186,6 +195,7 @@ static void alarm_handler(union sigval sigval)
         s_flags.err_detected = true;
         return;
     }
+#endif
 
 }
 
@@ -471,6 +481,17 @@ void *server_thread(void* thread_arg)
         memcpy((void*) (rx_buffer + bytes_in_buf), (void*) rx_packet, num_bytes_recv);
         bytes_in_buf += num_bytes_recv;
 
+#if (USE_AESD_CHAR_DEVICE == 1)
+        socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
+        if(socketFile_fd == -1)
+        {
+            syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
+            exit_from_thread(param, true, rx_packet, true, rx_buffer);
+            return NULL;        
+        }
+        s_flags.is_file_open = true;
+#endif
+
         // While packets are complete (newline exists), write out to file
         while((newline_offset = memchr(rx_buffer, (int)'\n', bytes_in_buf)) != NULL)
         {           
@@ -520,6 +541,12 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
+#if (USE_AESD_CHAR_DEVICE == 1)
+            close(socketFile_fd);
+            s_flags.is_file_open = false;
+#endif
+
+
 
             bytes_in_buf -= ((char*)newline_offset - (char*)rx_buffer + 1);
 
@@ -543,8 +570,19 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
+#if (USE_AESD_CHAR_DEVICE == 0)
             // Start reading from the beginning of the file
             lseek(socketFile_fd, 0, SEEK_SET);
+#else
+            socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
+            if(socketFile_fd == -1)
+            {
+                syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
+                exit_from_thread(param, true, rx_packet, true, rx_buffer);
+                return NULL;        
+            }
+            s_flags.is_file_open = true;
+#endif
 
             // While there are bytes to read from the file, send to server
             while(num_bytes_change != 0)
@@ -587,6 +625,11 @@ void *server_thread(void* thread_arg)
             }
 
             newline_offset = NULL;
+
+#if (USE_AESD_CHAR_DEVICE == 1)
+            close(socketFile_fd);
+            s_flags.is_file_open = false;
+#endif
 
         } // While newline exists in buffer
 
@@ -757,7 +800,7 @@ int main(int argc, char* argv[])
     s_flags.is_log_open = true;
 
     // Create file to write into
-    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR, 0744);
+    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR, 0644);
 
     
     if(socketFile_fd == -1)
