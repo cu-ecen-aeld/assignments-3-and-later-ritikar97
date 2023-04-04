@@ -669,9 +669,12 @@ read_file:
             newline_offset = NULL;
 
 #if (USE_AESD_CHAR_DEVICE == 1)
-            syslog(LOG_INFO, "Closed file\n");
-            close(socketFile_fd);
-            s_flags.is_file_open = false;
+            if(s_flags.is_file_open)
+            {
+                syslog(LOG_INFO, "Closed file\n");
+                close(socketFile_fd);
+                s_flags.is_file_open = false;
+            }
 #endif
 
         } // While newline exists in buffer
@@ -848,7 +851,7 @@ int main(int argc, char* argv[])
     s_flags.is_log_open = true;
 
     // Create file to write into
-    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR | O_TRUNC, 0744);
+    /*socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR | O_TRUNC, 0744);
 
     
     if(socketFile_fd == -1)
@@ -859,7 +862,7 @@ int main(int argc, char* argv[])
     }
 
     syslog(LOG_INFO, "File opened\n");
-    s_flags.is_file_open = true;
+    s_flags.is_file_open = true;*/
 
     // Initialize and obtain socket address
     memset(&hints, 0, sizeof hints);
