@@ -502,15 +502,18 @@ void *server_thread(void* thread_arg)
             seek_flag = false;
 
 #if (USE_AESD_CHAR_DEVICE == 1)
-
-            socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
-            if(socketFile_fd == -1)
+            if(!s_flags.is_file_open)
             {
-                syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
-                exit_from_thread(param, true, rx_packet, true, rx_buffer);
-                return NULL;        
+                socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
+                if(socketFile_fd == -1)
+                {
+                    syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
+                    exit_from_thread(param, true, rx_packet, true, rx_buffer);
+                    return NULL;        
+                }
+                syslog(LOG_INFO, "Opened file\n");
+                s_flags.is_file_open = true;
             }
-            s_flags.is_file_open = true;
 #endif
   
 #if (USE_AESD_CHAR_DEVICE == 1)
@@ -661,9 +664,12 @@ read_file:
                 return NULL;
             }
 
+            syslog(LOG_INFO, "Done read()\n");
+
             newline_offset = NULL;
 
 #if (USE_AESD_CHAR_DEVICE == 1)
+            syslog(LOG_INFO, "Closed file\n");
             close(socketFile_fd);
             s_flags.is_file_open = false;
 #endif
@@ -674,13 +680,15 @@ read_file:
 
     } // while data is being received 
 
-
+    syslog(LOG_INFO, "Done recv()\n");
     if(num_bytes_recv == -1)
     {
         syslog(LOG_ERR, "ERROR: recv() %s\n", strerror(errno));
     }
 
     exit_from_thread(param, true, rx_packet, true, rx_buffer);
+
+    syslog(LOG_INFO, "Exiting thread\n");
 
     return NULL;
 }
@@ -793,6 +801,9 @@ static int socket_server()
 
     close(socketfd);
     s_flags.is_socket_open = false;
+
+    syslog(LOG_INFO, "Exiting socket_server()\n");
+
 
     return 0;
 }
@@ -913,6 +924,8 @@ int main(int argc, char* argv[])
     add_timer();
 
     ret_val = socket_server();
+
+    syslog(LOG_INFO, "Exiting program\n");
     
     exit_program(); // Clean exit
 
