@@ -19,6 +19,7 @@
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
 #include <linux/slab.h>	// kmalloc, krealloc, kfree
+#include "aesd_ioctl.h"
 
 #ifdef __KERNEL__
 #include <linux/string.h>
@@ -137,12 +138,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 
     // Get device pointer
     dev = filp -> private_data;
-
-    // Get interruptible lock
-    if (mutex_lock_interruptible(&(dev -> dev_lock)))
-    {
-        return -ERESTARTSYS;
-    }
 		
     //kmalloc a buffer to copy from user space
     temp_buf = kmalloc(count, GFP_KERNEL);
@@ -159,6 +154,12 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         PDEBUG("Unable to copy from user\n");
         goto exit_with_free;
     }  
+
+    // Get interruptible lock
+    if (mutex_lock_interruptible(&(dev -> dev_lock)))
+    {
+        return -ERESTARTSYS;
+    }
 
     // If last write was completed, create a buffer
     if(dev -> prev_wr_completed)
@@ -216,12 +217,156 @@ exit_gracefully:
 }
 
 
+loff_t aesd_llseek(struct file *filp, loff_t off, int whence)
+{
+    struct aesd_dev* dev;
+    loff_t cb_size = 0;
+    struct aesd_buffer_entry* entry_ptr = NULL;
+    uint8_t index = 0;
+    loff_t retval;
+
+    // Check if the inputs are valid
+    if(filp == NULL)
+    {
+        PDEBUG("Invalid file pointer\n");
+        return -EINVAL;
+    }
+
+    // Get device pointer
+    dev = filp -> private_data;
+
+    // Get interruptible lock
+    if (mutex_lock_interruptible(&(dev -> dev_lock)))
+    {
+        return -ERESTARTSYS;
+    }
+
+    // Adding all AESD circular buffer entries
+    AESD_CIRCULAR_BUFFER_FOREACH(entry_ptr, &(aesd_device.aesd_cb), index)
+    {
+        if(entry_ptr -> buffptr != NULL)
+        {
+            cb_size += entry_ptr -> size;
+        }
+    }
+
+    retval = fixed_size_llseek(filp, off, whence, cb_size);
+
+    if(retval == -EINVAL)
+    {
+        PDEBUG("Invalid \"whence\" value\n");
+    }
+
+    mutex_unlock(&(dev -> dev_lock));
+    
+    return retval;
+
+}
+
+
+static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset)
+{
+    struct aesd_dev* dev;
+    int i;
+
+    // Check for valid inputs
+    if(filp == NULL)
+    {
+        PDEBUG("Invalid file pointer\n");
+        return -EINVAL;
+    }
+
+    // Get device pointer
+    dev = filp -> private_data;
+
+    // Get interruptible lock
+    if (mutex_lock_interruptible(&(dev -> dev_lock)))
+    {
+        return -ERESTARTSYS;
+    }
+
+    int total_num_entries = dev -> aesd_cb.in_offs - dev -> aesd_cb.out_offs;
+
+    if(total_num_entries < 0)
+    {
+        total_num_entries += AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
+
+    if((write_cmd > total_num_entries) || (write_cmd_offset > (dev -> aesd_cb.entry[write_cmd].size - 1)))
+    {
+        PDEBUG("Invalid input values for write_cmd / write_cmd_offset\n");
+        return -EINVAL;
+    }
+
+    for(i = 0; i < write_cmd; i++)
+    {
+        filp -> f_pos += (dev -> aesd_cb.entry[i].size);
+    }
+
+    filp -> f_pos += write_cmd_offset;
+
+    mutex_unlock(&(dev -> dev_lock));
+    
+    return 0;
+
+
+}
+
+
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    // Reference : scull example
+	int retval = 0;
+
+    // Check for valid inputs
+    if(filp == NULL)
+    {
+        PDEBUG("Invalid file pointer\n");
+        return -EINVAL;
+    }
+    
+	/*
+	 * Extract the type and number bitfields, and don't decode
+	 * wrong cmds: return ENOTTY (inappropriate ioctl) 
+	 */
+
+	if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC) return -ENOTTY;
+	if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR) return -ENOTTY;
+
+    switch(cmd)
+    {
+        case AESDCHAR_IOCSEEKTO:
+        {
+            struct aesd_seekto seekto;
+            if(copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) != 0)
+            {
+                retval = -EFAULT;
+            }
+            else
+            {
+                retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+            }
+
+            break;
+        }
+        default:  /* redundant, as cmd was checked against MAXNR */
+        {
+		    return -ENOTTY;
+            break;
+        }
+    }
+
+    return retval;
+}
+
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
+    .llseek =   aesd_llseek
 };
 
 

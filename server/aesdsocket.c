@@ -30,6 +30,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include "aesd_ioctl.h"
 
 #define PORT ("9000")
 
@@ -51,6 +52,8 @@
     for ((var) = SLIST_FIRST((head));                                        \
             (var) && ((tvar) = SLIST_NEXT((var), field), 1);                 \
             (var) = (tvar))
+
+const char* ioctl_command = "AESDCHAR_IOCSEEKTO:";
 
 
 // Struct to hold status flags
@@ -436,6 +439,7 @@ void *server_thread(void* thread_arg)
     int num_bytes_recv, bytes_in_buf = 0;
     int num_buf_segments = 1;
     int status;
+    struct aesd_seekto seekto;
 
     thread_param_t* param = (thread_param_t*) thread_arg;
     
@@ -495,6 +499,20 @@ void *server_thread(void* thread_arg)
         // While packets are complete (newline exists), write out to file
         while((newline_offset = memchr(rx_buffer, (int)'\n', bytes_in_buf)) != NULL)
         {           
+#if (USE_AESD_CHAR_DEVICE == 1)
+            if(!strncmp(ioctl_command, rx_buffer, strlen(ioctl_command)))
+            {
+                sscanf(rx_buffer, "AESDCHAR_IOCSEEKTO:%d,%d", &seekto.write_cmd, &seekto.write_cmd_offset);
+                status = ioctl(socketFile_fd, AESDCHAR_IOCSEEKTO, &seekto);
+
+                if(status != 0)
+                {
+                    syslog(LOG_ERR, "ERROR: aesd_ioctl() %s\n", strerror(errno));
+                }  
+            }
+            goto read_file;
+#endif
+            
             // Number of bytes in the packet
             num_bytes_change = (char*)newline_offset - (char*)rx_buffer + 1;
 
@@ -541,11 +559,10 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
-#if (USE_AESD_CHAR_DEVICE == 1)
+/*#if (USE_AESD_CHAR_DEVICE == 1)
             close(socketFile_fd);
             s_flags.is_file_open = false;
-#endif
-
+#endif*/
 
 
             bytes_in_buf -= ((char*)newline_offset - (char*)rx_buffer + 1);
@@ -573,7 +590,7 @@ void *server_thread(void* thread_arg)
 #if (USE_AESD_CHAR_DEVICE == 0)
             // Start reading from the beginning of the file
             lseek(socketFile_fd, 0, SEEK_SET);
-#else
+/*#else
             socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
             if(socketFile_fd == -1)
             {
@@ -581,9 +598,10 @@ void *server_thread(void* thread_arg)
                 exit_from_thread(param, true, rx_packet, true, rx_buffer);
                 return NULL;        
             }
-            s_flags.is_file_open = true;
+            s_flags.is_file_open = true;*/
 #endif
 
+read_file:
             // While there are bytes to read from the file, send to server
             while(num_bytes_change != 0)
             {
@@ -591,7 +609,7 @@ void *server_thread(void* thread_arg)
 
                 if(byte_delta_in_file == -1)
                 {
-                    syslog(LOG_ERR, "ERROR: read()\n");
+                    syslog(LOG_ERR, "ERROR: read() %s\n", strerror(errno));
                     exit_from_thread(param, true, rx_packet, true, rx_buffer);
 
                     // Unlock access to the file

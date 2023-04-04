@@ -1,12 +1,14 @@
 # References : ../examples/autotest-validate/Makefile
 CROSS_COMPILE = 
 
+INCLUDES = -I ../aesd-char-driver/
+
 ifeq ($(CC),)
 	CC ?= $(CROSS_COMPILE)gcc
 endif
 
 ifeq ($(CFLAGS),)
-	CFLAGS ?= -g -Wall -Werror
+	CFLAGS ?= -g -Wall -Werror ${INCLUDES}
 endif
 
 ifeq ($(LDFLAGS),)
