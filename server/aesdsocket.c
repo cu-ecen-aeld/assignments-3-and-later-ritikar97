@@ -440,6 +440,7 @@ void *server_thread(void* thread_arg)
     int num_bytes_recv, bytes_in_buf = 0;
     int num_buf_segments = 1;
     int status;
+    bool seek_flag = false;
 
     thread_param_t* param = (thread_param_t*) thread_arg;
     
@@ -464,7 +465,6 @@ void *server_thread(void* thread_arg)
 
     memset(rx_packet, 0, RX_PACKET_LEN);
 
-    syslog(LOG_INFO, "Calling recv()\n");
     // Operate on data stream as long as packets are received 
     while(((num_bytes_recv = recv(param -> client_fd, rx_packet, RX_PACKET_LEN, 0)) > 0) && (!s_flags.signal_caught) && (!s_flags.err_detected))
     {
@@ -485,8 +485,6 @@ void *server_thread(void* thread_arg)
         memcpy((void*) (rx_buffer + bytes_in_buf), (void*) rx_packet, num_bytes_recv);
         bytes_in_buf += num_bytes_recv;
 
-        syslog(LOG_INFO, "Bytes in buf = %d\n", bytes_in_buf);      
-
 /*#if (USE_AESD_CHAR_DEVICE == 1)
         socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
         if(socketFile_fd == -1)
@@ -498,13 +496,13 @@ void *server_thread(void* thread_arg)
         s_flags.is_file_open = true;
 #endif*/
 
-        syslog(LOG_INFO, "Checking for newline\n");
         // While packets are complete (newline exists), write out to file
         while((newline_offset = memchr(rx_buffer, (int)'\n', bytes_in_buf)) != NULL)
         {   
+            seek_flag = false;
 
 #if (USE_AESD_CHAR_DEVICE == 1)
-            syslog(LOG_INFO, "Opening file at %d\n", __LINE__);
+
             socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
             if(socketFile_fd == -1)
             {
@@ -528,6 +526,7 @@ void *server_thread(void* thread_arg)
                 {
                     syslog(LOG_ERR, "ERROR: aesd_ioctl() %s\n", strerror(errno));
                 }  
+                seek_flag = true;
                 goto read_file;
             }
 #endif
@@ -578,11 +577,6 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
-/*#if (USE_AESD_CHAR_DEVICE == 1)
-            close(socketFile_fd);
-            s_flags.is_file_open = false;
-#endif*/
-
 read_file:
             bytes_in_buf -= ((char*)newline_offset - (char*)rx_buffer + 1);
 
@@ -623,14 +617,13 @@ read_file:
             }*/
 #endif
 
-            syslog(LOG_INFO, "Starting read\n");
-
             // While there are bytes to read from the file, send to server
             while(num_bytes_change != 0)
             {
                 byte_delta_in_file = read(socketFile_fd, &tx_buffer[0], RX_PACKET_LEN);
 
-                syslog(LOG_INFO, "Number of bytes read = %d\n", byte_delta_in_file);
+                if(seek_flag && byte_delta_in_file == 0)
+                    break;
 
                 if(byte_delta_in_file == -1)
                 {
@@ -654,9 +647,8 @@ read_file:
                 int total_bytes_sent = 0;
 
                 total_bytes_sent = send(param -> client_fd, &tx_buffer[0], num_bytes_to_send, 0); 
-                num_bytes_change -= total_bytes_sent; 
 
-                //syslog(LOG_INFO, "Number of bytes changed = %d\n", num_bytes_change);
+                num_bytes_change -= total_bytes_sent; 
             } 
 
             // Unlock access to the file
@@ -671,18 +663,12 @@ read_file:
 
             newline_offset = NULL;
 
-            syslog(LOG_INFO, "Done with read\n");
-
-
 #if (USE_AESD_CHAR_DEVICE == 1)
-            syslog(LOG_INFO, "Closing file at %d\n", __LINE__);
             close(socketFile_fd);
             s_flags.is_file_open = false;
 #endif
 
         } // While newline exists in buffer
-
-        syslog(LOG_INFO, "No more newline characters\n");
 
         memset(rx_packet, 0, RX_PACKET_LEN);
 

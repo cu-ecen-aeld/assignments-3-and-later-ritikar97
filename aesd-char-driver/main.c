@@ -64,7 +64,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     struct aesd_buffer_entry *read_entry;
     size_t num_bytes_read;
 
-    //PDEBUG("read %zu bytes with offset %lld",count,*f_pos); todo
+    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
 
     // Check if any of inputs are invalid 
     if(filp == NULL || buf == NULL)
@@ -106,7 +106,6 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         goto exit_gracefully;
     }
 
-    PDEBUG("Reading form f_pos = %d and filp -> f_pos = %d\n", f_pos, filp -> f_pos);
     PDEBUG("Number of bytes read = %d\n", num_bytes_read);
 
     *f_pos += num_bytes_read;
@@ -307,8 +306,6 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
     }
 
     filp -> f_pos += write_cmd_offset;
-
-    PDEBUG("filp -> f_pos is %zu\n", filp -> f_pos);
 
     mutex_unlock(&(dev -> dev_lock));
     
