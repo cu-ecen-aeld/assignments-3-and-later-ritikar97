@@ -30,7 +30,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include "aesd_ioctl.h"
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define PORT ("9000")
 
