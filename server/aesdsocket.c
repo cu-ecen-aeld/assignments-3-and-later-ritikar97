@@ -40,6 +40,7 @@
 
 #if (USE_AESD_CHAR_DEVICE == 1)
 #define PATH_SOCKETDATA_FILE ("/dev/aesdchar")
+const char* ioctl_command = "AESDCHAR_IOCSEEKTO:";
 #else
 #define PATH_SOCKETDATA_FILE ("/var/tmp/aesdsocketdata")
 #endif
@@ -53,7 +54,6 @@
             (var) && ((tvar) = SLIST_NEXT((var), field), 1);                 \
             (var) = (tvar))
 
-const char* ioctl_command = "AESDCHAR_IOCSEEKTO:";
 
 
 // Struct to hold status flags
@@ -403,6 +403,7 @@ static void signal_handler(int signo)
 
         if(s_flags.is_socket_open)
         {
+            syslog(LOG_INFO, "Shutting down\n");
             if(shutdown(socketfd, SHUT_RDWR) == -1)
 	        {
 		        syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
@@ -439,9 +440,10 @@ void *server_thread(void* thread_arg)
     int num_bytes_recv, bytes_in_buf = 0;
     int num_buf_segments = 1;
     int status;
-    struct aesd_seekto seekto;
 
     thread_param_t* param = (thread_param_t*) thread_arg;
+
+    syslog(LOG_INFO, "tid = %ld\n", param -> tid);
     
     // Allocate memory to receive and store packets
     rx_packet = (char*) malloc(RX_PACKET_LEN*sizeof(char));
@@ -464,10 +466,11 @@ void *server_thread(void* thread_arg)
 
     memset(rx_packet, 0, RX_PACKET_LEN);
 
+    syslog(LOG_INFO, "Checking for newline\n");
     // Operate on data stream as long as packets are received 
     while(((num_bytes_recv = recv(param -> client_fd, rx_packet, RX_PACKET_LEN, 0)) > 0) && (!s_flags.signal_caught) && (!s_flags.err_detected))
     {
-        
+        syslog(LOG_INFO, "Newline found");
         // If the rx_buffer does not have enough space, realloc it
         if((num_buf_segments*RX_PACKET_LEN) - bytes_in_buf < num_bytes_recv)
         {
@@ -485,6 +488,8 @@ void *server_thread(void* thread_arg)
         memcpy((void*) (rx_buffer + bytes_in_buf), (void*) rx_packet, num_bytes_recv);
         bytes_in_buf += num_bytes_recv;
 
+        syslog(LOG_INFO, "Bytes in buf = %d\n", bytes_in_buf);      
+
 #if (USE_AESD_CHAR_DEVICE == 1)
         socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
         if(socketFile_fd == -1)
@@ -496,12 +501,16 @@ void *server_thread(void* thread_arg)
         s_flags.is_file_open = true;
 #endif
 
+        syslog(LOG_INFO, "Checking for newline\n");
         // While packets are complete (newline exists), write out to file
         while((newline_offset = memchr(rx_buffer, (int)'\n', bytes_in_buf)) != NULL)
-        {           
+        {     
 #if (USE_AESD_CHAR_DEVICE == 1)
+
+            struct aesd_seekto seekto;
             if(!strncmp(ioctl_command, rx_buffer, strlen(ioctl_command)))
             {
+                syslog(LOG_INFO, "Calling ioctl()\n");
                 sscanf(rx_buffer, "AESDCHAR_IOCSEEKTO:%d,%d", &seekto.write_cmd, &seekto.write_cmd_offset);
                 status = ioctl(socketFile_fd, AESDCHAR_IOCSEEKTO, &seekto);
 
@@ -509,8 +518,9 @@ void *server_thread(void* thread_arg)
                 {
                     syslog(LOG_ERR, "ERROR: aesd_ioctl() %s\n", strerror(errno));
                 }  
+
+                goto read_file;
             }
-            goto read_file;
 #endif
             
             // Number of bytes in the packet
@@ -521,6 +531,7 @@ void *server_thread(void* thread_arg)
                 syslog(LOG_ERR, "ERROR: Incorrect calculation\n");
             }
 
+            syslog(LOG_INFO, "Acquiring mutex");
             // Lock access to the file
             status = pthread_mutex_lock(&socketFileMutex);
 
@@ -531,10 +542,14 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
+            syslog(LOG_INFO, "Writing to file\n");
+
             // Bytes actually written to file
             byte_delta_in_file = write(socketFile_fd, rx_buffer, num_bytes_change);
 
             bytes_in_file += byte_delta_in_file;
+
+            syslog(LOG_INFO, "Releasing mutex");
 
             // Unlock access to the file
             status = pthread_mutex_unlock(&socketFileMutex);
@@ -545,6 +560,7 @@ void *server_thread(void* thread_arg)
                 exit_from_thread(param, true, rx_packet, true, rx_buffer);
                 return NULL;
             }
+            syslog(LOG_INFO, "Released mutex\n");
 
             if(byte_delta_in_file == -1)
             {
@@ -559,12 +575,14 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
+            syslog(LOG_INFO, "byte_delta_in_file = %dn", byte_delta_in_file);  
+
 /*#if (USE_AESD_CHAR_DEVICE == 1)
             close(socketFile_fd);
             s_flags.is_file_open = false;
 #endif*/
 
-
+read_file:
             bytes_in_buf -= ((char*)newline_offset - (char*)rx_buffer + 1);
 
             // After writing out bytes to file, shift the bytes to fill the emptied space in the buffer
@@ -601,7 +619,8 @@ void *server_thread(void* thread_arg)
             s_flags.is_file_open = true;*/
 #endif
 
-read_file:
+            syslog(LOG_INFO, "Starting read\n");
+
             // While there are bytes to read from the file, send to server
             while(num_bytes_change != 0)
             {
@@ -650,6 +669,8 @@ read_file:
 #endif
 
         } // While newline exists in buffer
+
+        syslog(LOG_INFO, "No more newline characters\n");
 
         memset(rx_packet, 0, RX_PACKET_LEN);
 
@@ -818,7 +839,7 @@ int main(int argc, char* argv[])
     s_flags.is_log_open = true;
 
     // Create file to write into
-    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR, 0644);
+    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR | O_TRUNC, 0744);
 
     
     if(socketFile_fd == -1)

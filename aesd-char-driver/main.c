@@ -64,7 +64,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     struct aesd_buffer_entry *read_entry;
     size_t num_bytes_read;
 
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
+    //PDEBUG("read %zu bytes with offset %lld",count,*f_pos); todo
 
     // Check if any of inputs are invalid 
     if(filp == NULL || buf == NULL)
@@ -92,9 +92,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     // Check if required count is within the bounds of the entry or not
     if((read_entry -> size - entry_byte_offset) < count)
     {
-        
         num_bytes_read = read_entry -> size - entry_byte_offset;
-        
     }
     else
     {
@@ -107,6 +105,8 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         retval = -EFAULT;
         goto exit_gracefully;
     }
+
+    PDEBUG("Reading form f_pos = %d and filp -> f_pos = %d\n", f_pos, filp -> f_pos);
 
     *f_pos += num_bytes_read;
 
@@ -287,10 +287,12 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
 
     int total_num_entries = dev -> aesd_cb.in_offs - dev -> aesd_cb.out_offs;
 
-    if(total_num_entries < 0)
+    if(total_num_entries <= 0)
     {
         total_num_entries += AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
     }
+
+    PDEBUG("Total number of entries is %d\n", total_num_entries);
 
     if((write_cmd > total_num_entries) || (write_cmd_offset > (dev -> aesd_cb.entry[write_cmd].size - 1)))
     {
@@ -305,12 +307,15 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
 
     filp -> f_pos += write_cmd_offset;
 
+    PDEBUG("filp -> f_pos is %zu\n", filp -> f_pos);
+
     mutex_unlock(&(dev -> dev_lock));
     
     return 0;
 
 
 }
+
 
 
 long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -351,22 +356,27 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         }
         default:  /* redundant, as cmd was checked against MAXNR */
         {
-		    return -ENOTTY;
+		    PDEBUG("Inside default case - string did not match the AESDCHAR_IOCSEEKTO command\n");
+            return -ENOTTY;
             break;
         }
     }
+
+    PDEBUG("Value of retval is %d\n", retval);
+    PDEBUG("Value off_pos is %zu\n", filp -> f_pos);
 
     return retval;
 }
 
 
 struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
-    .llseek =   aesd_llseek
+    .owner =            THIS_MODULE,
+    .read =             aesd_read,
+    .write =            aesd_write,
+    .open =             aesd_open,
+    .release =          aesd_release,
+    .llseek =           aesd_llseek,
+    .unlocked_ioctl =   aesd_ioctl
 };
 
 
