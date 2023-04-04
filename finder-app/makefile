@@ -1,22 +1,15 @@
 # References : ../examples/autotest-validate/Makefile
 #			   https://www.gnu.org/software/make/manual/html_node/Conditional-Example.html
 
-ifeq ($(CROSS_COMPILE), aarch64-none-linux-gnu-)
-	CC := aarch64-none-linux-gnu-gcc
-else 
-	CC := gcc
-endif
 
 
-SRC := writer.c 
-TARGET = writer
-OBJS := $(SRC:.c=.o)
+CC := gcc
+SRC := writer.c
+TARGET := writer
 CFLAGS := -Wall -Werror
 
-all: $(TARGET)
-
-$(TARGET) : $(OBJS)
-	$(CC) $(CFLAGS) $(INCLUDES) $(OBJS) -o $(TARGET)
+all: ${SRC}
+	$(CROSS_COMPILE)$(CC) $(CFLAGS) ${SRC} -o ${TARGET}
 
 clean:
-	-rm -f *.o $(TARGET) 	
+	rm -f *.o ${TARGET}

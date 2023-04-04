@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # file: writer.sh
 # This script creates a file at the specified location with the specified text
