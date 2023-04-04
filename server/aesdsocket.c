@@ -501,10 +501,10 @@ void *server_thread(void* thread_arg)
         {   
             seek_flag = false;
 
-#if (USE_AESD_CHAR_DEVICE == 1)
+//#if (USE_AESD_CHAR_DEVICE == 1)
             if(!s_flags.is_file_open)
             {
-                socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
+                socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC | O_APPEND, 0744);
                 if(socketFile_fd == -1)
                 {
                     syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
@@ -514,7 +514,7 @@ void *server_thread(void* thread_arg)
                 syslog(LOG_INFO, "Opened file\n");
                 s_flags.is_file_open = true;
             }
-#endif
+//#endif
   
 #if (USE_AESD_CHAR_DEVICE == 1)
 
@@ -606,18 +606,6 @@ read_file:
 #if (USE_AESD_CHAR_DEVICE == 0)
             // Start reading from the beginning of the file
             lseek(socketFile_fd, 0, SEEK_SET);
-#else
-            /*if(!seek_flag)
-            {
-                socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
-                if(socketFile_fd == -1)
-                {
-                    syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
-                    exit_from_thread(param, true, rx_packet, true, rx_buffer);
-                    return NULL;        
-                }
-                s_flags.is_file_open = true;
-            }*/
 #endif
 
             // While there are bytes to read from the file, send to server
@@ -668,14 +656,12 @@ read_file:
 
             newline_offset = NULL;
 
-#if (USE_AESD_CHAR_DEVICE == 1)
             if(s_flags.is_file_open)
             {
                 syslog(LOG_INFO, "Closed file\n");
                 close(socketFile_fd);
                 s_flags.is_file_open = false;
             }
-#endif
 
         } // While newline exists in buffer
 
