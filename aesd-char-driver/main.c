@@ -107,6 +107,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     }
 
     PDEBUG("Reading form f_pos = %d and filp -> f_pos = %d\n", f_pos, filp -> f_pos);
+    PDEBUG("Number of bytes read = %d\n", num_bytes_read);
 
     *f_pos += num_bytes_read;
 
@@ -312,8 +313,6 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
     mutex_unlock(&(dev -> dev_lock));
     
     return 0;
-
-
 }
 
 
@@ -363,7 +362,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     }
 
     PDEBUG("Value of retval is %d\n", retval);
-    PDEBUG("Value off_pos is %zu\n", filp -> f_pos);
+    PDEBUG("Value filp -> pos is %zu\n", filp -> f_pos);
 
     return retval;
 }

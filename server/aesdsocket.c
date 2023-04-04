@@ -442,8 +442,6 @@ void *server_thread(void* thread_arg)
     int status;
 
     thread_param_t* param = (thread_param_t*) thread_arg;
-
-    syslog(LOG_INFO, "tid = %ld\n", param -> tid);
     
     // Allocate memory to receive and store packets
     rx_packet = (char*) malloc(RX_PACKET_LEN*sizeof(char));
@@ -466,11 +464,10 @@ void *server_thread(void* thread_arg)
 
     memset(rx_packet, 0, RX_PACKET_LEN);
 
-    syslog(LOG_INFO, "Checking for newline\n");
+    syslog(LOG_INFO, "Calling recv()\n");
     // Operate on data stream as long as packets are received 
     while(((num_bytes_recv = recv(param -> client_fd, rx_packet, RX_PACKET_LEN, 0)) > 0) && (!s_flags.signal_caught) && (!s_flags.err_detected))
     {
-        syslog(LOG_INFO, "Newline found");
         // If the rx_buffer does not have enough space, realloc it
         if((num_buf_segments*RX_PACKET_LEN) - bytes_in_buf < num_bytes_recv)
         {
@@ -490,7 +487,7 @@ void *server_thread(void* thread_arg)
 
         syslog(LOG_INFO, "Bytes in buf = %d\n", bytes_in_buf);      
 
-#if (USE_AESD_CHAR_DEVICE == 1)
+/*#if (USE_AESD_CHAR_DEVICE == 1)
         socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
         if(socketFile_fd == -1)
         {
@@ -499,12 +496,25 @@ void *server_thread(void* thread_arg)
             return NULL;        
         }
         s_flags.is_file_open = true;
-#endif
+#endif*/
 
         syslog(LOG_INFO, "Checking for newline\n");
         // While packets are complete (newline exists), write out to file
         while((newline_offset = memchr(rx_buffer, (int)'\n', bytes_in_buf)) != NULL)
-        {     
+        {   
+
+#if (USE_AESD_CHAR_DEVICE == 1)
+            syslog(LOG_INFO, "Opening file at %d\n", __LINE__);
+            socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
+            if(socketFile_fd == -1)
+            {
+                syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
+                exit_from_thread(param, true, rx_packet, true, rx_buffer);
+                return NULL;        
+            }
+            s_flags.is_file_open = true;
+#endif
+  
 #if (USE_AESD_CHAR_DEVICE == 1)
 
             struct aesd_seekto seekto;
@@ -518,7 +528,6 @@ void *server_thread(void* thread_arg)
                 {
                     syslog(LOG_ERR, "ERROR: aesd_ioctl() %s\n", strerror(errno));
                 }  
-
                 goto read_file;
             }
 #endif
@@ -531,7 +540,6 @@ void *server_thread(void* thread_arg)
                 syslog(LOG_ERR, "ERROR: Incorrect calculation\n");
             }
 
-            syslog(LOG_INFO, "Acquiring mutex");
             // Lock access to the file
             status = pthread_mutex_lock(&socketFileMutex);
 
@@ -542,14 +550,10 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
-            syslog(LOG_INFO, "Writing to file\n");
-
             // Bytes actually written to file
             byte_delta_in_file = write(socketFile_fd, rx_buffer, num_bytes_change);
 
             bytes_in_file += byte_delta_in_file;
-
-            syslog(LOG_INFO, "Releasing mutex");
 
             // Unlock access to the file
             status = pthread_mutex_unlock(&socketFileMutex);
@@ -560,7 +564,6 @@ void *server_thread(void* thread_arg)
                 exit_from_thread(param, true, rx_packet, true, rx_buffer);
                 return NULL;
             }
-            syslog(LOG_INFO, "Released mutex\n");
 
             if(byte_delta_in_file == -1)
             {
@@ -574,8 +577,6 @@ void *server_thread(void* thread_arg)
                 exit_from_thread(param, true, rx_packet, true, rx_buffer);
                 return NULL;
             }
-
-            syslog(LOG_INFO, "byte_delta_in_file = %dn", byte_delta_in_file);  
 
 /*#if (USE_AESD_CHAR_DEVICE == 1)
             close(socketFile_fd);
@@ -608,15 +609,18 @@ read_file:
 #if (USE_AESD_CHAR_DEVICE == 0)
             // Start reading from the beginning of the file
             lseek(socketFile_fd, 0, SEEK_SET);
-/*#else
-            socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
-            if(socketFile_fd == -1)
+#else
+            /*if(!seek_flag)
             {
-                syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
-                exit_from_thread(param, true, rx_packet, true, rx_buffer);
-                return NULL;        
-            }
-            s_flags.is_file_open = true;*/
+                socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
+                if(socketFile_fd == -1)
+                {
+                    syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
+                    exit_from_thread(param, true, rx_packet, true, rx_buffer);
+                    return NULL;        
+                }
+                s_flags.is_file_open = true;
+            }*/
 #endif
 
             syslog(LOG_INFO, "Starting read\n");
@@ -625,6 +629,8 @@ read_file:
             while(num_bytes_change != 0)
             {
                 byte_delta_in_file = read(socketFile_fd, &tx_buffer[0], RX_PACKET_LEN);
+
+                syslog(LOG_INFO, "Number of bytes read = %d\n", byte_delta_in_file);
 
                 if(byte_delta_in_file == -1)
                 {
@@ -647,8 +653,10 @@ read_file:
 
                 int total_bytes_sent = 0;
 
-                total_bytes_sent = send(param -> client_fd, &tx_buffer[0], num_bytes_to_send, 0);
-                num_bytes_change -= total_bytes_sent;
+                total_bytes_sent = send(param -> client_fd, &tx_buffer[0], num_bytes_to_send, 0); 
+                num_bytes_change -= total_bytes_sent; 
+
+                //syslog(LOG_INFO, "Number of bytes changed = %d\n", num_bytes_change);
             } 
 
             // Unlock access to the file
@@ -663,7 +671,11 @@ read_file:
 
             newline_offset = NULL;
 
+            syslog(LOG_INFO, "Done with read\n");
+
+
 #if (USE_AESD_CHAR_DEVICE == 1)
+            syslog(LOG_INFO, "Closing file at %d\n", __LINE__);
             close(socketFile_fd);
             s_flags.is_file_open = false;
 #endif
