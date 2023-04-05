@@ -30,6 +30,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include "../aesd-char-driver/aesd_ioctl.h"
 
 #define PORT ("9000")
 
@@ -39,6 +40,7 @@
 
 #if (USE_AESD_CHAR_DEVICE == 1)
 #define PATH_SOCKETDATA_FILE ("/dev/aesdchar")
+const char* ioctl_command = "AESDCHAR_IOCSEEKTO:";
 #else
 #define PATH_SOCKETDATA_FILE ("/var/tmp/aesdsocketdata")
 #endif
@@ -51,6 +53,7 @@
     for ((var) = SLIST_FIRST((head));                                        \
             (var) && ((tvar) = SLIST_NEXT((var), field), 1);                 \
             (var) = (tvar))
+
 
 
 // Struct to hold status flags
@@ -400,6 +403,7 @@ static void signal_handler(int signo)
 
         if(s_flags.is_socket_open)
         {
+            syslog(LOG_INFO, "Shutting down\n");
             if(shutdown(socketfd, SHUT_RDWR) == -1)
 	        {
 		        syslog(LOG_ERR, "ERROR: shutdown() %s\n", strerror(errno));
@@ -436,6 +440,7 @@ void *server_thread(void* thread_arg)
     int num_bytes_recv, bytes_in_buf = 0;
     int num_buf_segments = 1;
     int status;
+    bool seek_flag = false;
 
     thread_param_t* param = (thread_param_t*) thread_arg;
     
@@ -463,7 +468,6 @@ void *server_thread(void* thread_arg)
     // Operate on data stream as long as packets are received 
     while(((num_bytes_recv = recv(param -> client_fd, rx_packet, RX_PACKET_LEN, 0)) > 0) && (!s_flags.signal_caught) && (!s_flags.err_detected))
     {
-        
         // If the rx_buffer does not have enough space, realloc it
         if((num_buf_segments*RX_PACKET_LEN) - bytes_in_buf < num_bytes_recv)
         {
@@ -481,7 +485,7 @@ void *server_thread(void* thread_arg)
         memcpy((void*) (rx_buffer + bytes_in_buf), (void*) rx_packet, num_bytes_recv);
         bytes_in_buf += num_bytes_recv;
 
-#if (USE_AESD_CHAR_DEVICE == 1)
+/*#if (USE_AESD_CHAR_DEVICE == 1)
         socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
         if(socketFile_fd == -1)
         {
@@ -490,11 +494,46 @@ void *server_thread(void* thread_arg)
             return NULL;        
         }
         s_flags.is_file_open = true;
-#endif
+#endif*/
 
         // While packets are complete (newline exists), write out to file
         while((newline_offset = memchr(rx_buffer, (int)'\n', bytes_in_buf)) != NULL)
-        {           
+        {   
+            seek_flag = false;
+
+//#if (USE_AESD_CHAR_DEVICE == 1)
+            if(!s_flags.is_file_open)
+            {
+                socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC | O_APPEND, 0744);
+                if(socketFile_fd == -1)
+                {
+                    syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
+                    exit_from_thread(param, true, rx_packet, true, rx_buffer);
+                    return NULL;        
+                }
+                syslog(LOG_INFO, "Opened file\n");
+                s_flags.is_file_open = true;
+            }
+//#endif
+  
+#if (USE_AESD_CHAR_DEVICE == 1)
+
+            struct aesd_seekto seekto;
+            if(!strncmp(ioctl_command, rx_buffer, strlen(ioctl_command)))
+            {
+                syslog(LOG_INFO, "Calling ioctl()\n");
+                sscanf(rx_buffer, "AESDCHAR_IOCSEEKTO:%d,%d", &seekto.write_cmd, &seekto.write_cmd_offset);
+                status = ioctl(socketFile_fd, AESDCHAR_IOCSEEKTO, &seekto);
+
+                if(status != 0)
+                {
+                    syslog(LOG_ERR, "ERROR: aesd_ioctl() %s\n", strerror(errno));
+                }  
+                seek_flag = true;
+                goto read_file;
+            }
+#endif
+            
             // Number of bytes in the packet
             num_bytes_change = (char*)newline_offset - (char*)rx_buffer + 1;
 
@@ -541,13 +580,7 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
-#if (USE_AESD_CHAR_DEVICE == 1)
-            close(socketFile_fd);
-            s_flags.is_file_open = false;
-#endif
-
-
-
+read_file:
             bytes_in_buf -= ((char*)newline_offset - (char*)rx_buffer + 1);
 
             // After writing out bytes to file, shift the bytes to fill the emptied space in the buffer
@@ -573,15 +606,6 @@ void *server_thread(void* thread_arg)
 #if (USE_AESD_CHAR_DEVICE == 0)
             // Start reading from the beginning of the file
             lseek(socketFile_fd, 0, SEEK_SET);
-#else
-            socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_RDWR | O_TRUNC, 0744);
-            if(socketFile_fd == -1)
-            {
-                syslog(LOG_ERR, "ERROR: open() %s at line %d\n", strerror(errno), __LINE__);
-                exit_from_thread(param, true, rx_packet, true, rx_buffer);
-                return NULL;        
-            }
-            s_flags.is_file_open = true;
 #endif
 
             // While there are bytes to read from the file, send to server
@@ -589,9 +613,12 @@ void *server_thread(void* thread_arg)
             {
                 byte_delta_in_file = read(socketFile_fd, &tx_buffer[0], RX_PACKET_LEN);
 
+                if(seek_flag && byte_delta_in_file == 0)
+                    break;
+
                 if(byte_delta_in_file == -1)
                 {
-                    syslog(LOG_ERR, "ERROR: read()\n");
+                    syslog(LOG_ERR, "ERROR: read() %s\n", strerror(errno));
                     exit_from_thread(param, true, rx_packet, true, rx_buffer);
 
                     // Unlock access to the file
@@ -610,8 +637,9 @@ void *server_thread(void* thread_arg)
 
                 int total_bytes_sent = 0;
 
-                total_bytes_sent = send(param -> client_fd, &tx_buffer[0], num_bytes_to_send, 0);
-                num_bytes_change -= total_bytes_sent;
+                total_bytes_sent = send(param -> client_fd, &tx_buffer[0], num_bytes_to_send, 0); 
+
+                num_bytes_change -= total_bytes_sent; 
             } 
 
             // Unlock access to the file
@@ -624,12 +652,16 @@ void *server_thread(void* thread_arg)
                 return NULL;
             }
 
+            syslog(LOG_INFO, "Done read()\n");
+
             newline_offset = NULL;
 
-#if (USE_AESD_CHAR_DEVICE == 1)
-            close(socketFile_fd);
-            s_flags.is_file_open = false;
-#endif
+            if(s_flags.is_file_open)
+            {
+                syslog(LOG_INFO, "Closed file\n");
+                close(socketFile_fd);
+                s_flags.is_file_open = false;
+            }
 
         } // While newline exists in buffer
 
@@ -637,13 +669,15 @@ void *server_thread(void* thread_arg)
 
     } // while data is being received 
 
-
+    syslog(LOG_INFO, "Done recv()\n");
     if(num_bytes_recv == -1)
     {
         syslog(LOG_ERR, "ERROR: recv() %s\n", strerror(errno));
     }
 
     exit_from_thread(param, true, rx_packet, true, rx_buffer);
+
+    syslog(LOG_INFO, "Exiting thread\n");
 
     return NULL;
 }
@@ -757,6 +791,9 @@ static int socket_server()
     close(socketfd);
     s_flags.is_socket_open = false;
 
+    syslog(LOG_INFO, "Exiting socket_server()\n");
+
+
     return 0;
 }
 
@@ -800,7 +837,7 @@ int main(int argc, char* argv[])
     s_flags.is_log_open = true;
 
     // Create file to write into
-    socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR, 0644);
+    /*socketFile_fd = open(PATH_SOCKETDATA_FILE, O_CREAT | O_APPEND | O_RDWR | O_TRUNC, 0744);
 
     
     if(socketFile_fd == -1)
@@ -811,7 +848,7 @@ int main(int argc, char* argv[])
     }
 
     syslog(LOG_INFO, "File opened\n");
-    s_flags.is_file_open = true;
+    s_flags.is_file_open = true;*/
 
     // Initialize and obtain socket address
     memset(&hints, 0, sizeof hints);
@@ -876,6 +913,8 @@ int main(int argc, char* argv[])
     add_timer();
 
     ret_val = socket_server();
+
+    syslog(LOG_INFO, "Exiting program\n");
     
     exit_program(); // Clean exit
 
